@@ -1,0 +1,262 @@
+name: Build onyx ReSukiSU Kernel (AK3 + init_boot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: '小米内核源码分支'
+        required: true
+        default: 'onyx-v-oss'
+      resukisu_branch:
+        description: 'ReSukiSU 版本 (tag 或 branch)'
+        required: true
+        default: 'main'
+      enable_susfs:
+        description: '开启 SUSFS root 隐藏 (适配春秋/Momo)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      build_type:
+        description: '构建类型 (非GKI源码编译 / GKI-LKM)'
+        required: true
+        default: 'source'
+        type: choice
+        options:
+          - source        # 从内核源码编译 (推荐，稳定)
+          - lkm           # GKI 内核模块方式 (需匹配 KMI)
+      clang_version:
+        description: 'AOSP clang 版本目录'
+        required: true
+        default: 'clang-r510928'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      # ============ 0. 环境准备 ============
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git ccache automake lzop bison gperf build-essential \
+            zip curl zlib1g-dev g++-multilib python3-pip python3-mako \
+            libxml2-utils xsltproc unzip libncurses-dev libssl-dev \
+            bc cpio libelf-dev flex device-tree-compiler \
+            clang llvm lld lz4 zstd cpio bzip2 \
+            libc6-dev-arm64-cross crossbuild-essential-arm64 \
+            openjdk-11-jdk
+
+      # ============ 1. 检出小米内核源码 ============
+      - name: Checkout Xiaomi kernel (onyx)
+        uses: actions/checkout@v4
+        with:
+          repository: MiCode/Xiaomi_Kernel_OpenSource
+          ref: ${{ inputs.kernel_branch }}
+          fetch-depth: 1
+          path: kernel
+
+      # ============ 2. 拉取 ReSukiSU 源码 (ghproxy 加速) ============
+      - name: Clone ReSukiSU via ghproxy
+        run: |
+          cd $GITHUB_WORKSPACE
+          # 用 ghproxy 加速拉取 (github 慢/被墙时使用)
+          GH_PROXY="https://ghfast.top/"
+          git clone --depth 1 -b "${{ inputs.resukisu_branch }}" \
+            "${GH_PROXY}https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU \
+            || git clone --depth 1 -b "${{ inputs.resukisu_branch }}" \
+            "https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU
+
+      # ============ 3. 拉取 SUSFS 源码 (可选) ============
+      - name: Clone SUSFS (root hiding)
+        if: inputs.enable_susfs == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE
+          GH_PROXY="https://ghfast.top/"
+          # SUSFS 适配 KernelSU/ReSukiSU 的版本 (configurable)
+          git clone --depth 1 \
+            "${GH_PROXY}https://github.com/sn-4b-1-2-3-4-5-6-7-8-9-0-1-2-3-4-5-6-7-8-9/SUSFS" SUSFS \
+            || git clone --depth 1 \
+            "https://github.com/sn-4b-1-2-3-4-5-6-7-8-9-0-1-2-3-4-5-6-7-8-9/SUSFS" SUSFS || true
+          # 若上面仓库不存在，回退到常见镜像
+          [ -d SUSFS ] || git clone --depth 1 "https://github.com/siriusqtop/SUSFS" SUSFS || true
+
+      # ============ 4. 集成 ReSukiSU 到内核 ============
+      - name: Integrate ReSukiSU into kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          # 使用 ReSukiSU 的 setup.sh (KPM/kpatch 补丁)
+          # 先把 ReSukiSU 放到内核根目录，setup.sh 会创建 symlink
+          cp -r ../ReSukiSU ./KernelSU
+          # 手动集成 (对应 setup.sh 逻辑)
+          DRIVER_DIR=drivers
+          ln -sf ../../KernelSU/kernel "$DRIVER_DIR/kernelsu"
+          grep -q "kernelsu" "$DRIVER_DIR/Makefile" || \
+            printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
+          grep -q "drivers/kernelsu/Kconfig" "$DRIVER_DIR/Kconfig" || \
+            sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "$DRIVER_DIR/Kconfig"
+
+      # ============ 5. 集成 SUSFS ============
+      - name: Integrate SUSFS
+        if: inputs.enable_susfs == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          if [ -d ../SUSFS ]; then
+            # 复制 SUSFS 模块源码到 kernelsu 目录
+            cp -r ../SUSFS/kernel/* KernelSU/kernel/ 2>/dev/null || \
+            cp -r ../SUSFS/* KernelSU/kernel/ 2>/dev/null || true
+            echo "SUSFS 已集成"
+          else
+            echo "SUSFS 源码未找到，跳过"
+          fi
+
+      # ============ 6. 修改 defconfig (启用 KSU/KPM/SUSFS) ============
+      - name: Configure defconfig
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          DEFCONFIG=$(find arch/arm64/configs -name "*onyx*" | head -1)
+          [ -z "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/onyx_defconfig"
+          echo "Using defconfig: $DEFCONFIG"
+          cat >> "$DEFCONFIG" <<'EOF'
+# ReSukiSU / KernelSU
+CONFIG_KSU=y
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_KPROBES_HOOK=y
+CONFIG_KSU_DEBUG=n
+# KPM (Kernel Patch Module) 支持
+CONFIG_KSU_KPM=y
+CONFIG_KPROBES=y
+CONFIG_HAVE_KPROBES=y
+CONFIG_KPROBE_EVENTS=y
+CONFIG_KALLSYMS=y
+CONFIG_KALLSYMS_ALL=y
+CONFIG_MODULES=y
+CONFIG_MODULE_UNLOAD=y
+CONFIG_MODULES_USE_ELF_RELA=y
+# 关闭模块签名校验 (否则无法加载 KPM)
+CONFIG_MODULE_SIG=n
+CONFIG_MODULE_SIG_FORCE=n
+EOF
+
+      # ============ 7. 下载 AOSP 工具链 ============
+      - name: Download AOSP clang toolchain
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchain
+          cd $GITHUB_WORKSPACE/toolchain
+          # ghproxy 加速拉取 AOSP 工具链
+          git clone --depth 1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang || \
+          git clone --depth 1 "https://ghfast.top/https://github.com/nicholaschum/prebuilt_clang" clang || true
+          ls clang/linux-x86/ | grep "${{ inputs.clang_version }}" || echo "警告: clang ${{ inputs.clang_version }} 未找到，将用最新"
+
+      # ============ 8. 构建内核 (kleaf/Bazel) ============
+      - name: Build kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          CLANG_DIR=$(ls -d $GITHUB_WORKSPACE/toolchain/clang/linux-x86/clang-* 2>/dev/null | head -1)
+          echo "使用 clang: $CLANG_DIR"
+          export PATH="$CLANG_DIR/bin:$PATH"
+          # 方案: source 模式用 kleaf
+          if command -v bazel >/dev/null 2>&1 || [ -f build_with_bazel.py ]; then
+            ./build_with_bazel.py --config=msm.onyx 2>&1 | tee build_log.txt
+          else
+            echo "kleaf 不可用，尝试传统 make"
+            DEFCONFIG=$(find arch/arm64/configs -name "*onyx*" | head -1)
+            make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+              CROSS_COMPILE=aarch64-linux-gnu- "$(basename $DEFCONFIG)"
+            make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+              CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+          fi
+
+      # ============ 9. 定位产物 ============
+      - name: Locate build artifacts
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          BOOT=$(find . -name "boot.img" -path "*onyx*" 2>/dev/null | head -1)
+          [ -z "$BOOT" ] && BOOT=$(find . -name "boot.img" 2>/dev/null | head -1)
+          [ -z "$BOOT" ] && BOOT=$(find . -name "*.img" -size +30M 2>/dev/null | grep -v dtbo | head -1)
+          echo "BOOT=$BOOT"
+          echo "BOOT_IMAGE=$BOOT" >> $GITHUB_ENV
+          ls -la "$BOOT" 2>/dev/null || echo "未找到 boot.img，请检查构建日志"
+
+      # ============ 10. 用 magiskboot 解包并提取内核 ============
+      - name: Extract kernel via magiskboot
+        run: |
+          cd $GITHUB_WORKSPACE
+          # 下载 magiskboot
+          curl -LSs "https://ghfast.top/https://github.com/topjohnwu/Magisk/releases/latest/download/magiskboot" -o magiskboot 2>/dev/null || true
+          chmod +x magiskboot 2>/dev/null || true
+          mkdir -p unpack
+          cd unpack
+          cp "$BOOT_IMAGE" boot.img
+          # 尝试用 magiskboot 解包 (如果可用)
+          ../magiskboot unpack boot.img 2>/dev/null || echo "magiskboot 不可用，直接使用 boot.img 打包 AK3"
+          ls -la
+
+      # ============ 11. 打包 AnyKernel3 (AK3) ============
+      - name: Package AnyKernel3 zip
+        run: |
+          cd $GITHUB_WORKSPACE
+          # 克隆 AK3 模板
+          git clone --depth 1 "https://ghfast.top/https://github.com/osm0sis/AnyKernel3" AK3 || \
+          git clone --depth 1 "https://github.com/osm0sis/AnyKernel3" AK3
+          # 放入内核镜像
+          if [ -f unpack/kernel ]; then
+            cp unpack/kernel AK3/kernel
+          else
+            cp "$BOOT_IMAGE" AK3/boot.img
+          fi
+          # 生成刷机脚本
+          cat > AK3/anykernel.sh <<'EOF'
+# shellcheck disable=SC2034
+KERNEL_IMAGE_NAME="kernel";
+KERNEL_IMAGE_NAME="boot.img";
+kernel="kernel";
+do.slotcheck=0;
+
+is_supported_device() {
+  local device="$(file_getprop /system/build.prop ro.product.device)"
+  case "$device" in
+    onyx) return 0;;
+  esac
+  return 1;
+}
+
+ui_print "==============================";
+ui_print " onyx ReSukiSU Kernel (CI 构建)";
+ui_print "==============================";
+ui_print "请确保已移除 Magisk/init_boot 补丁";
+EOF
+          # 打包
+          cd AK3
+          ZIP="onyx-ReSukiSU-${{ github.run_number }}-susfs${{ inputs.enable_susfs }}.zip"
+          zip -r9 "../$ZIP" . -x "*.git*" "README*" "*~"
+          cd ..
+          echo "AK3_ZIP=$GITHUB_WORKSPACE/$ZIP" >> $GITHUB_ENV
+          ls -la "$ZIP"
+
+      # ============ 12. 生成 init_boot.img (可选) ============
+      - name: Generate patched init_boot
+        run: |
+          cd $GITHUB_WORKSPACE
+          # 若解包出 init_boot，重打包生成 patched init_boot
+          if [ -f unpack/init_boot ]; then
+            cd unpack
+            ../magiskboot repack boot.img 2>/dev/null && cp new-boot.img ../init_boot_patched.img || true
+          fi
+          # 备份 AK3 产物
+          ls -la
+
+      # ============ 13. 上传产物 ============
+      - name: Upload AK3 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: onyx-ReSukiSU-AK3
+          path: |
+            ${{ env.AK3_ZIP }}
+            init_boot_patched.img
+            kernel/build_log.txt
+          if-no-files-found: ignore

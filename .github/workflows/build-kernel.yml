@@ -17,8 +17,13 @@ jobs:
           fetch-depth: 1
           path: kernel
 
-      - name: Hello
+      - name: Clone ReSukiSU
         run: |
-          cd kernel
-          ls -la arch/arm64/configs/ | grep onyx
-          echo "Found onyx configs"
+          cd $GITHUB_WORKSPACE
+          GH_PROXY="https://ghfast.top/"
+          git clone --depth 1 -b "main" "${GH_PROXY}https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU || \
+          git clone --depth 1 -b "main" "https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU
+          ls -la ReSukiSU/
+
+      - name: Hello
+        run: echo "OK"

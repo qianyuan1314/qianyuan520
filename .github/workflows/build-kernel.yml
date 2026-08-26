@@ -40,8 +40,9 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           GH_PROXY="https://ghfast.top/"
-          git clone --depth 1 -b "${{ github.event.inputs.resukisu_branch || 'main' }}" "${GH_PROXY}https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU || \
-          git clone --depth 1 -b "${{ github.event.inputs.resukisu_branch || 'main' }}" "https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU
+          RS_BRANCH="${{ github.event.inputs.resukisu_branch || 'main' }}"
+          git clone --depth 1 -b "$RS_BRANCH" "${GH_PROXY}https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU || \
+          git clone --depth 1 -b "$RS_BRANCH" "https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU
 
       - name: Install dependencies
         run: |

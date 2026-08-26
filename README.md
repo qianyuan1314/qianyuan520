@@ -1,5 +1,5 @@
 # qianyuan520
 
-## Build Kernel with ReSukiSU
+## Test Workflow
 
-CI pipeline for onyx device
+Added test.yml

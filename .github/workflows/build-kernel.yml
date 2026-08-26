@@ -1,10 +1,12 @@
-name: Build onyx ReSukiSU Kernel (AK3 + init_boot)
+name: Build onyx ReSukiSU Kernel
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       kernel_branch:
-        description: 'Xiaomi kernel source branch'
+        description: 'Kernel branch'
         required: true
         default: 'onyx-v-oss'
       resukisu_branch:
@@ -26,11 +28,11 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Checkout Xiaomi kernel source
+      - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
           repository: MiCode/Xiaomi_Kernel_OpenSource
-          ref: ${{ github.event.inputs.kernel_branch }}
+          ref: ${{ github.event.inputs.kernel_branch || 'onyx-v-oss' }}
           fetch-depth: 1
           path: kernel
 
@@ -38,17 +40,13 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           GH_PROXY="https://ghfast.top/"
-          git clone --depth 1 -b "${{ github.event.inputs.resukisu_branch }}" \
-            "${GH_PROXY}https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU || \
-          git clone --depth 1 -b "${{ github.event.inputs.resukisu_branch }}" \
-            "https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU
+          git clone --depth 1 -b "${{ github.event.inputs.resukisu_branch || 'main' }}" "${GH_PROXY}https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU || \
+          git clone --depth 1 -b "${{ github.event.inputs.resukisu_branch || 'main' }}" "https://github.com/ReSukiSU/ReSukiSU.git" ReSukiSU
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git curl zip bison gperf build-essential \
-            python3-pip bc cpio unzip libc6-dev-arm64-cross clang llvm lld \
-            flex libelf-dev device-tree-compiler gcc-multilib
+          sudo apt-get install -y git curl zip bison gperf build-essential python3-pip bc cpio unzip libc6-dev-arm64-cross clang llvm lld flex libelf-dev device-tree-compiler gcc-multilib
 
       - name: Integrate ReSukiSU
         run: |
@@ -56,10 +54,8 @@ jobs:
           cp -r "$GITHUB_WORKSPACE/ReSukiSU" ./KernelSU
           DRIVER_DIR=drivers
           ln -sf ../../KernelSU/kernel "$DRIVER_DIR/kernelsu"
-          grep -q "kernelsu" "$DRIVER_DIR/Makefile" || \
-            printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
-          grep -q "drivers/kernelsu/Kconfig" "$DRIVER_DIR/Kconfig" || \
-            sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "$DRIVER_DIR/Kconfig"
+          grep -q "kernelsu" "$DRIVER_DIR/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
+          grep -q "drivers/kernelsu/Kconfig" "$DRIVER_DIR/Kconfig" || sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "$DRIVER_DIR/Kconfig"
 
       - name: Configure defconfig
         run: |
@@ -83,7 +79,7 @@ EOF
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain
           cd $GITHUB_WORKSPACE/toolchain
-          git clone --depth 1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang 2>&1 | tail -1
+          git clone --depth 1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang
 
       - name: Build kernel
         run: |
@@ -93,20 +89,17 @@ EOF
           if [ -f build_with_bazel.py ]; then
             ./build_with_bazel.py --config=msm.onyx 2>&1 | tee build_log.txt
           else
-            make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- $(basename $DEFCONFIG)
+            make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- "$DEFCONFIG"
             make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
           fi
-          echo "BUILD_DONE=1" >> $GITHUB_ENV
 
-      - name: Package AK3 zip
-        if: env.BUILD_DONE == '1'
+      - name: Package AK3
         run: |
           cd $GITHUB_WORKSPACE
           git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git AK3
-          BOOT=$(find kernel -name "boot.img" | head -1)
+          BOOT=$(find kernel -name "boot.img" 2>/dev/null | head -1)
           [ -n "$BOOT" ] && cp "$BOOT" AK3/boot.img
           cat > AK3/anykernel.sh <<'EOF'
-# AnyKernel3
 KERNEL_IMAGE_NAME="boot.img"
 do_nothing="this_stays_here"
 is_supported_device() {
@@ -114,10 +107,9 @@ is_supported_device() {
   case "$device" in onyx) return 0;; esac
   return 1
 }
-ui_print "onyx ReSukiSU Kernel (CI Build)"
+ui_print "onyx ReSukiSU Kernel"
 EOF
-          cd AK3
-          zip -r9 "../onyx-ReSukiSU-AK3.zip" . -x "*.git*" "README*" "*~"
+          cd AK3 && zip -r9 "../onyx-ReSukiSU-AK3.zip" . -x "*.git*" "README*" "*~"
           echo "AK3_ZIP=$GITHUB_WORKSPACE/onyx-ReSukiSU-AK3.zip" >> $GITHUB_ENV
 
       - name: Upload artifact

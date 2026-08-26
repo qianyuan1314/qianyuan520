@@ -1,5 +1,5 @@
 # qianyuan520
 
-## Add ReSukiSU Step
+## Full Kernel Build Workflow
 
-Testing step by step
+ReSukiSU + SUSFS + AK3

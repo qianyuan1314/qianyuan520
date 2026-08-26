@@ -1,5 +1,5 @@
 # qianyuan520
 
-## Minimal Test
+## Add ReSukiSU Step
 
-Testing minimal workflow
+Testing step by step

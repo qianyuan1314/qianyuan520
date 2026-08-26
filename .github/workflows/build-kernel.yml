@@ -73,16 +73,14 @@ jobs:
           BOOT=$(find kernel -name "boot.img" 2>/dev/null | head -1)
           if [ -n "$BOOT" ]; then
             cp "$BOOT" AK3/boot.img
-            cat > AK3/anykernel.sh <<'EOF'
-KERNEL_IMAGE_NAME="boot.img"
-do_nothing="this_stays_here"
-is_supported_device() {
-  local device="$(file_getprop /system/build.prop ro.product.device)"
-  case "$device" in onyx) return 0;; esac
-  return 1
-}
-ui_print "onyx ReSukiSU Kernel"
-EOF
+            echo 'KERNEL_IMAGE_NAME="boot.img"' > AK3/anykernel.sh
+            echo 'do_nothing="this_stays_here"' >> AK3/anykernel.sh
+            echo 'is_supported_device() {' >> AK3/anykernel.sh
+            echo '  local device="$(file_getprop /system/build.prop ro.product.device)"' >> AK3/anykernel.sh
+            echo '  case "$device" in onyx) return 0;; esac' >> AK3/anykernel.sh
+            echo '  return 1' >> AK3/anykernel.sh
+            echo '}' >> AK3/anykernel.sh
+            echo 'ui_print "onyx ReSukiSU Kernel"' >> AK3/anykernel.sh
             cd AK3 && zip -r9 "../onyx-ReSukiSU-AK3.zip" . -x "*.git*" "README*" "*~"
             echo "AK3_ZIP=$GITHUB_WORKSPACE/onyx-ReSukiSU-AK3.zip" >> $GITHUB_ENV
           fi

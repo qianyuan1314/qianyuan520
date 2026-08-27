@@ -1,5 +1,5 @@
 # qianyuan520
 
-## Fix YAML heredoc
+## Fix bazel path
 
-No heredoc syntax
+Install to home bin

@@ -49,22 +49,28 @@ jobs:
 
       - name: Setup bazel
         run: |
-          mkdir -p $HOME/bin
-          cd $HOME/bin
+          # build_with_bazel.py 期望 bazel 在 <workspace>/tools/bazel
+          mkdir -p $GITHUB_WORKSPACE/tools
+          cd $GITHUB_WORKSPACE/tools
           curl -L "https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64" -o bazel
           chmod +x bazel
-          export PATH="$HOME/bin:$PATH"
-          bazel --version || true
-          echo "$HOME/bin" >> $GITHUB_PATH
+          ./bazel --version || true
           echo "BAZEL_SETUP_DONE=1" >> $GITHUB_ENV
 
       - name: Build kernel
         if: env.BAZEL_SETUP_DONE == '1'
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          ./build_with_bazel.py -t onyx consolidate 2>&1 | tee build_log.txt || echo "BUILD_FAILED"
-          find . -name "boot.img" 2>/dev/null | head -5
-          echo "BUILD_DONE=1" >> $GITHUB_ENV
+          ./build_with_bazel.py -t onyx consolidate 2>&1 | tee build_log.txt
+          # 只有找到 boot.img 才算成功
+          BOOT_FOUND=$(find . -name "boot.img" 2>/dev/null | head -1)
+          if [ -n "$BOOT_FOUND" ]; then
+            echo "BUILD_DONE=1" >> $GITHUB_ENV
+            echo "BOOT_IMG=$BOOT_FOUND" >> $GITHUB_ENV
+          else
+            echo "构建失败：未找到 boot.img"
+            exit 1
+          fi
 
       - name: Package AK3
         if: env.BUILD_DONE == '1'

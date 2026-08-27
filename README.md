@@ -1,5 +1,5 @@
 # qianyuan520
 
-## Fixed YAML Syntax
+## Fixed Build Command
 
-Removed heredoc << operator
+Using make instead of bazel

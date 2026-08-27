@@ -45,6 +45,7 @@ jobs:
           DEFCONFIG=$(find arch/arm64/configs -name "*onyx*" | head -1)
           [ -z "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/onyx_defconfig"
           printf "\n# KernelSU/SUSFS\nCONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_KPROBES_HOOK=y\nCONFIG_KSU_KPM=y\nCONFIG_KPROBES=y\nCONFIG_KALLSYMS=y\nCONFIG_KALLSYMS_ALL=y\nCONFIG_MODULES=y\nCONFIG_MODULE_UNLOAD=y\nCONFIG_MODULE_SIG=n\n" >> "$DEFCONFIG"
+          echo "DEFCONFIG=$DEFCONFIG" >> $GITHUB_ENV
 
       - name: Download AOSP toolchain
         run: |
@@ -57,12 +58,10 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel
           CLANG_DIR=$(ls -d $GITHUB_WORKSPACE/toolchain/clang/linux-x86/clang-* 2>/dev/null | head -1)
           export PATH="$CLANG_DIR/bin:$PATH"
-          if [ -f build_with_bazel.py ]; then
-            ./build_with_bazel.py --config=msm.onyx 2>&1 | tee build_log.txt
-          else
-            make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- "$DEFCONFIG"
-            make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
-          fi
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 "$DEFCONFIG"
+          make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+          cp out/arch/arm64/boot/Image.gz .
           echo "BUILD_DONE=1" >> $GITHUB_ENV
 
       - name: Package AK3
@@ -70,10 +69,9 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git AK3
-          BOOT=$(find kernel -name "boot.img" 2>/dev/null | head -1)
-          if [ -n "$BOOT" ]; then
-            cp "$BOOT" AK3/boot.img
-            echo 'KERNEL_IMAGE_NAME="boot.img"' > AK3/anykernel.sh
+          if [ -f Image.gz ]; then
+            cp Image.gz AK3/Image.gz
+            echo 'KERNEL_IMAGE_NAME="Image.gz"' > AK3/anykernel.sh
             echo 'do_nothing="this_stays_here"' >> AK3/anykernel.sh
             echo 'is_supported_device() {' >> AK3/anykernel.sh
             echo '  local device="$(file_getprop /system/build.prop ro.product.device)"' >> AK3/anykernel.sh

@@ -1,7 +1,5 @@
 # qianyuan520
 
-## Fixed Build Command
+## kleaf/bazel Build
 
-Using make instead of bazel
-
-Kernel compilation will start now
+Using correct onyx target

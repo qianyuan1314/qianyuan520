@@ -28,10 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git curl zip bison gperf build-essential \
-            python3-pip python3-mako python3-pyelftools bc cpio unzip \
-            libc6-dev-arm64-cross clang llvm lld flex libelf-dev \
-            device-tree-compiler gcc-multilib ccache
+          sudo apt-get install -y git curl zip bison gperf build-essential python3-pip python3-mako bc cpio unzip libc6-dev-arm64-cross clang llvm lld flex libelf-dev device-tree-compiler gcc-multilib
 
       - name: Integrate ReSukiSU
         run: |
@@ -45,45 +42,25 @@ jobs:
       - name: Configure KSU defconfig
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # 找到 onyx 的实际 defconfig（排除 consolidate fragment）
           ONYX_DEFCONFIG=$(find arch/arm64/configs -name "onyx*" ! -name "*consolidate*" | head -1)
           [ -z "$ONYX_DEFCONFIG" ] && ONYX_DEFCONFIG="arch/arm64/configs/vendor/onyx_defconfig"
           echo "Using defconfig: $ONYX_DEFCONFIG"
           printf "\n# KernelSU/SUSFS\nCONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_KPROBES_HOOK=y\nCONFIG_KSU_KPM=y\nCONFIG_KPROBES=y\nCONFIG_KALLSYMS=y\nCONFIG_KALLSYMS_ALL=y\nCONFIG_MODULES=y\nCONFIG_MODULE_UNLOAD=y\nCONFIG_MODULE_SIG=n\n" >> "$ONYX_DEFCONFIG"
 
-      - name: Setup bazel/kleaf
+      - name: Setup bazel
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          # 下载 Android 内核构建工具（含 kleaf）
-          mkdir -p $GITHUB_WORKSPACE/tools
-          cd $GITHUB_WORKSPACE/tools
-          GH_PROXY="https://ghfast.top/"
-          git clone --depth 1 "${GH_PROXY}https://github.com/nicholaschum/kernel_platform" tools_repo 2>/dev/null || echo "skip"
-          # 使用内核自带的 build_with_bazel.py
-          cd $GITHUB_WORKSPACE/kernel
-          cat > run_build.sh <<'SCRIPT'
-#!/bin/bash
-set -e
-export PATH="$HOME/bin:$PATH"
-# 初始化 bazel
-if ! command -v bazel >/dev/null; then
-  echo "Installing bazelisk..."
-  curl -L "https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64" -o /usr/local/bin/bazel
-  chmod +x /usr/local/bin/bazel
-fi
-# 构建 onyx 内核（GKI consolidate variant）
-./build_with_bazel.py -t onyx consolidate 2>&1 | tee build_log.txt || true
-# 查找产物
-find . -name "boot.img" 2>/dev/null | head -5
-SCRIPT
-          chmod +x run_build.sh
-          echo "BUILD_SETUP_DONE=1" >> $GITHUB_ENV
+          curl -L "https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64" -o /usr/local/bin/bazel
+          chmod +x /usr/local/bin/bazel
+          bazel --version || true
+          echo "BAZEL_SETUP_DONE=1" >> $GITHUB_ENV
 
       - name: Build kernel
-        if: env.BUILD_SETUP_DONE == '1'
+        if: env.BAZEL_SETUP_DONE == '1'
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          ./run_build.sh
+          ./build_with_bazel.py -t onyx consolidate 2>&1 | tee build_log.txt || echo "BUILD_FAILED"
+          find . -name "boot.img" 2>/dev/null | head -5
           echo "BUILD_DONE=1" >> $GITHUB_ENV
 
       - name: Package AK3

@@ -1,5 +1,5 @@
 # qianyuan520
 
-## Fix bazel path
+## Fix bazel location
 
-Install to home bin
+Put bazel in tools dir
